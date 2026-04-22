@@ -72,143 +72,183 @@ async def analyze_answer(payload: dict):
         elif target_company:
             role_context = f"The candidate is preparing for an interview at {target_company}."
 
-        category_rubric = """
-General rubric:
-- Clarity: Is the answer easy to understand and direct?
-- Structure: Is the answer organized logically?
-- Confidence: Does the answer sound assured and professional?
-- Conciseness: Is the answer focused without unnecessary detail?
-"""
-
         if "tell me about yourself" in category:
-            category_rubric = """
-Category-specific rubric: Tell me about yourself
-Evaluate the answer on:
-- Clarity: Is the self-introduction easy to follow?
-- Structure: Does it move logically from background to strengths to fit?
-- Confidence: Does the candidate sound professional and self-assured?
-- Conciseness: Is it short enough for an interview opening answer?
-Special expectations:
-- Should not sound like a life story
-- Should highlight relevant background
-- Should connect the candidate to the role
-- Should sound polished and natural in spoken English
+            category_guidance = """
+You are evaluating a "Tell me about yourself" answer.
+
+What strong answers should do:
+- open clearly and professionally
+- summarize relevant background
+- highlight strengths relevant to the target role
+- sound natural and spoken, not like a written essay
+- stay concise and not become a life story
+
+What weak answers often do:
+- give too much biography
+- lack focus
+- fail to connect background to the role
+- sound vague or generic
 """
         elif "behavioral" in category:
-            category_rubric = """
-Category-specific rubric: Behavioral interview
-Evaluate the answer on:
-- Clarity: Is the story easy to follow?
-- Structure: Does it follow a strong STAR-like flow (Situation, Task, Action, Result)?
-- Confidence: Does the candidate clearly describe what they did?
-- Conciseness: Is the story focused without too much irrelevant detail?
-Special expectations:
-- Should be specific, not vague
-- Should emphasize the candidate's actions
-- Should include a clear result or lesson
-- Should avoid staying too long in background/context
+            category_guidance = """
+You are evaluating a behavioral interview answer.
+
+What strong answers should do:
+- follow a clear STAR-like flow: situation, task, action, result
+- emphasize what the candidate personally did
+- include enough concrete detail
+- end with a result, impact, or lesson learned
+
+What weak answers often do:
+- stay too vague
+- over-explain background
+- fail to show action or ownership
+- omit the result
 """
-        elif "general" in category:
-            category_rubric = """
-Category-specific rubric: General interview
-Evaluate the answer on:
-- Clarity: Is the response direct and understandable?
-- Structure: Does it answer the question in a logical order?
-- Confidence: Does the candidate sound convincing and intentional?
-- Conciseness: Does it stay focused on the main point?
-Special expectations:
-- Should answer the actual question directly
-- Should include reasons, not just claims
-- Should sound persuasive and role-relevant
+        else:
+            category_guidance = """
+You are evaluating a general interview answer.
+
+What strong answers should do:
+- answer the question directly
+- explain reasoning clearly
+- connect the answer to the role
+- sound confident and concise
+
+What weak answers often do:
+- dodge the question
+- make claims without support
+- sound generic
+- include too much filler
 """
 
-        prompt = f"""
-You are a professional interview coach helping a candidate interview in English.
+        system_prompt = f"""
+You are an expert interview coach for English-language job interviews.
+
+Your job is to give high-quality, role-aware coaching that is specific, practical, and encouraging.
 
 {role_context}
 
-Your task is to evaluate the answer using the scoring rubric below and return ONLY valid JSON.
+{category_guidance}
 
-{category_rubric}
+Scoring dimensions:
+- clarity: Is the answer easy to understand?
+- structure: Is it organized logically?
+- confidence: Does it sound self-assured and professional?
+- conciseness: Is it focused without unnecessary detail?
 
+Scoring rules:
+- Use the full 1-10 range honestly.
+- Do not inflate scores.
+- Penalize vague, generic, repetitive, or unfocused answers.
+- Reward specificity, relevance, structure, and professional tone.
+
+Feedback rules:
+- strengths must be concrete, not generic praise
+- tips must be actionable, specific, and realistic
+- improvedAnswer must sound like natural spoken English
+- improvedAnswer should stay aligned with the question type
+- summary should explain the single biggest improvement opportunity clearly
+"""
+
+        user_prompt = f"""
 Question:
 {question}
 
-Answer:
+Candidate answer:
 {answer}
 
-Return ONLY this JSON schema exactly:
+Return JSON only with this schema:
 
 {{
-  "clarity": integer from 1 to 10,
-  "structure": integer from 1 to 10,
-  "confidence": integer from 1 to 10,
-  "conciseness": integer from 1 to 10,
+  "clarity": integer,
+  "structure": integer,
+  "confidence": integer,
+  "conciseness": integer,
   "strengths": [
-    "one specific strength",
-    "one specific strength"
+    "string",
+    "string"
   ],
   "tips": [
-    "one specific improvement tip",
-    "one specific improvement tip",
-    "one specific improvement tip"
+    "string",
+    "string",
+    "string"
   ],
-  "improvedAnswer": "a stronger improved version of the candidate's answer in natural spoken English",
-  "summary": "2-3 sentence coaching summary explaining the biggest improvement opportunity"
+  "improvedAnswer": "string",
+  "summary": "string"
 }}
 
-Rules:
-- Return JSON only, with no markdown and no extra commentary.
-- All scores must be integers from 1 to 10.
-- Tips must be specific and actionable, not generic.
-- Strengths must mention what the candidate did well.
-- Use the target role/company context when relevant.
-- The improvedAnswer should sound natural for spoken professional English, not overly formal.
-- For behavioral answers, prefer STAR structure in the improvedAnswer.
-- For 'Tell me about yourself', keep the improvedAnswer concise and role-oriented.
-- The summary should be short, practical, and encouraging.
+Additional requirements:
+- strengths must refer to something actually present in the answer
+- tips must explain exactly what to improve
+- improvedAnswer should be stronger but still realistic for the candidate
+- if the category is behavioral, use a STAR-like structure
+- if the category is tell me about yourself, keep it concise and role-oriented
+- if target role/company is available, use it naturally in your coaching
+- do not include markdown
+- do not include extra commentary outside the JSON
 """
 
         response = client.responses.create(
             model="gpt-5.4",
-            input=prompt,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer_feedback",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "clarity": {"type": "integer"},
+                            "structure": {"type": "integer"},
+                            "confidence": {"type": "integer"},
+                            "conciseness": {"type": "integer"},
+                            "strengths": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 2,
+                                "maxItems": 2
+                            },
+                            "tips": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 3,
+                                "maxItems": 3
+                            },
+                            "improvedAnswer": {"type": "string"},
+                            "summary": {"type": "string"},
+                        },
+                        "required": [
+                            "clarity",
+                            "structure",
+                            "confidence",
+                            "conciseness",
+                            "strengths",
+                            "tips",
+                            "improvedAnswer",
+                            "summary",
+                        ],
+                        "additionalProperties": False,
+                    },
+                }
+            },
         )
 
         output_text = response.output_text.strip()
         parsed = json.loads(output_text)
 
-        if "clarity" not in parsed:
-            parsed["clarity"] = 6
-        if "structure" not in parsed:
-            parsed["structure"] = 6
-        if "confidence" not in parsed:
-            parsed["confidence"] = 6
-        if "conciseness" not in parsed:
-            parsed["conciseness"] = 6
+        for key in ["clarity", "structure", "confidence", "conciseness"]:
+            try:
+                parsed[key] = int(parsed[key])
+            except Exception:
+                parsed[key] = 6
+            parsed[key] = max(1, min(10, parsed[key]))
 
-        try:
-            parsed["clarity"] = int(parsed["clarity"])
-        except Exception:
-            parsed["clarity"] = 6
-        try:
-            parsed["structure"] = int(parsed["structure"])
-        except Exception:
-            parsed["structure"] = 6
-        try:
-            parsed["confidence"] = int(parsed["confidence"])
-        except Exception:
-            parsed["confidence"] = 6
-        try:
-            parsed["conciseness"] = int(parsed["conciseness"])
-        except Exception:
-            parsed["conciseness"] = 6
-
-        parsed["clarity"] = max(1, min(10, parsed["clarity"]))
-        parsed["structure"] = max(1, min(10, parsed["structure"]))
-        parsed["confidence"] = max(1, min(10, parsed["confidence"]))
-        parsed["conciseness"] = max(1, min(10, parsed["conciseness"]))
-
-        if "strengths" not in parsed or not isinstance(parsed["strengths"], list):
+        if not isinstance(parsed.get("strengths"), list):
             parsed["strengths"] = []
         if len(parsed["strengths"]) < 2:
             fallback_strengths = [
@@ -219,8 +259,9 @@ Rules:
                 if len(parsed["strengths"]) >= 2:
                     break
                 parsed["strengths"].append(item)
+        parsed["strengths"] = parsed["strengths"][:2]
 
-        if "tips" not in parsed or not isinstance(parsed["tips"], list):
+        if not isinstance(parsed.get("tips"), list):
             parsed["tips"] = []
         if len(parsed["tips"]) < 3:
             fallback_tips = [
@@ -232,18 +273,16 @@ Rules:
                 if len(parsed["tips"]) >= 3:
                     break
                 parsed["tips"].append(item)
+        parsed["tips"] = parsed["tips"][:3]
 
-        if "summary" not in parsed or not parsed["summary"]:
+        if not parsed.get("summary"):
             parsed["summary"] = (
                 "Your answer has a good foundation, but it would be stronger with clearer structure "
                 "and more specific detail."
             )
 
-        if "improvedAnswer" not in parsed or not parsed["improvedAnswer"]:
+        if not parsed.get("improvedAnswer"):
             parsed["improvedAnswer"] = answer
-
-        parsed["strengths"] = parsed["strengths"][:2]
-        parsed["tips"] = parsed["tips"][:3]
 
         return parsed
 
